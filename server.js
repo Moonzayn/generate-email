@@ -619,7 +619,7 @@ setInterval(async () => {
 }, 15000);
 
 // ===================== START SERVER =====================
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3005;
 server.listen(PORT, () => {
     console.log(`
 ╔════════════════════════════════════════════════════════╗
