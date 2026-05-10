@@ -45,18 +45,6 @@ async function generate1SecMail() {
         }
         const email = `${login}@${domain}`;
         
-        // Test dengan request check mailbox
-        const testUrl = `https://www.1secmail.com/api/v1/?action=getMessages&login=${login}&domain=${domain}`;
-        await axios.get(testUrl, {
-            timeout: 10000,
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Referer': 'https://www.1secmail.com/'
-            }
-        });
-        
         return {
             address: email,
             login: login,
@@ -112,12 +100,11 @@ let mailTmToken = null;
 let lastMailTmRequest = 0;
 
 async function generateMailTm() {
-    // Rate limit: minimal 2 detik antar request
+    // Rate limit: minimal 3 detik antar request
     const now = Date.now();
-    if (now - lastMailTmRequest < 2000) {
-        await new Promise(resolve => setTimeout(resolve, 2000 - (now - lastMailTmRequest)));
+    if (now - lastMailTmRequest < 3000) {
+        await new Promise(resolve => setTimeout(resolve, 3000 - (now - lastMailTmRequest)));
     }
-    lastMailTmRequest = Date.now();
     
     try {
         const domainsRes = await axios.get('https://api.mail.tm/domains', { 
@@ -128,32 +115,37 @@ async function generateMailTm() {
         
         if (!domains || domains.length === 0) return null;
         
-        const domain = domains[0].domain;
+        // Filter hanya domain yang aktif
+        const activeDomain = domains.find(d => d.domain && !d.isDisabled) || domains[0];
+        const domain = activeDomain.domain;
+        
         const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
         let randomString = '';
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < 12; i++) {
             randomString += chars.charAt(Math.floor(Math.random() * chars.length));
         }
         const email = `${randomString}@${domain}`;
-        const password = Math.random().toString(36).substring(2, 14) + 'Aa1!';
+        const password = Math.random().toString(36).substring(2, 10) + 'Aa1!' + Math.random().toString(36).substring(2, 6);
         
         await axios.post('https://api.mail.tm/accounts', {
             address: email,
             password: password
         }, { 
-            timeout: 10000,
+            timeout: 15000,
             headers: { 'Content-Type': 'application/json' }
         });
         
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 1000));
         
         const tokenRes = await axios.post('https://api.mail.tm/token', {
             address: email,
             password: password
         }, { 
-            timeout: 10000,
+            timeout: 15000,
             headers: { 'Content-Type': 'application/json' }
         });
+        
+        lastMailTmRequest = Date.now();
         
         return {
             address: email,
@@ -197,80 +189,61 @@ async function getMessageMailTm(token, id) {
     }
 }
 
-// ===================== PROVIDER 3: MAIL.GW (Alternatif Mail.tm) =====================
-async function generateMailGw() {
+// ===================== PROVIDER 3: GUERRILLA MAIL =====================
+async function generateGuerrillaMail() {
     try {
-        const domainsRes = await axios.get('https://api.mail.gw/domains', { 
-            timeout: 10000,
-            headers: { 'Accept': 'application/json' }
-        });
-        const domains = domainsRes.data['hydra:member'];
-        
-        if (!domains || domains.length === 0) return null;
-        
-        const domain = domains[0].domain;
-        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-        let randomString = '';
-        for (let i = 0; i < 10; i++) {
-            randomString += chars.charAt(Math.floor(Math.random() * chars.length));
-        }
-        const email = `${randomString}@${domain}`;
-        const password = Math.random().toString(36).substring(2, 14) + 'Bb2@';
-        
-        await axios.post('https://api.mail.gw/accounts', {
-            address: email,
-            password: password
-        }, { 
-            timeout: 10000,
-            headers: { 'Content-Type': 'application/json' }
+        const response = await axios.get('https://api.guerrillamail.com/ajax.php', {
+            params: {
+                f: 'get_email_address',
+                ip: '127.0.0.1',
+                agent: 'TempMailApp_' + Math.random().toString(36).substring(2, 8)
+            },
+            timeout: 10000
         });
         
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        const tokenRes = await axios.post('https://api.mail.gw/token', {
-            address: email,
-            password: password
-        }, { 
-            timeout: 10000,
-            headers: { 'Content-Type': 'application/json' }
-        });
+        if (!response.data || !response.data.email_addr) return null;
         
         return {
-            address: email,
-            password: password,
-            token: tokenRes.data.token,
-            provider: 'mail.gw'
+            address: response.data.email_addr,
+            sidToken: response.data.sid_token,
+            alias: response.data.email_hash,
+            provider: 'guerrillamail'
         };
     } catch (error) {
-        console.error('mail.gw error:', error.message);
+        console.error('guerrillamail error:', error.message);
         return null;
     }
 }
 
-async function getInboxMailGw(token) {
+async function getInboxGuerrillaMail(address, sidToken) {
     try {
-        const response = await axios.get('https://api.mail.gw/messages', {
-            headers: { 
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
+        const response = await axios.get('https://api.guerrillamail.com/ajax.php', {
+            params: {
+                f: 'get_email_list',
+                email: address,
+                sid_token: sidToken
             },
             timeout: 10000
         });
-        return response.data['hydra:member'] || [];
+        
+        return response.data?.list || [];
     } catch (error) {
         return [];
     }
 }
 
-async function getMessageMailGw(token, id) {
+async function getMessageGuerrillaMail(address, sidToken, mailId) {
     try {
-        const response = await axios.get(`https://api.mail.gw/messages/${id}`, {
-            headers: { 
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
+        const response = await axios.get('https://api.guerrillamail.com/ajax.php', {
+            params: {
+                f: 'fetch_email',
+                email: address,
+                sid_token: sidToken,
+                email_id: mailId
             },
             timeout: 10000
         });
+        
         return response.data;
     } catch (error) {
         return null;
@@ -278,12 +251,14 @@ async function getMessageMailGw(token, id) {
 }
 
 // ===================== PROVIDER 4: DROPMAIL.ME =====================
+const dropmailApiKey = 'web-test-' + Math.random().toString(36).substring(2, 12);
+
 async function generateDropmail() {
     try {
-        const response = await axios.post('https://dropmail.me/api/graphql/web-test-wgq3v8e5p8nh', {
+        const response = await axios.post(`https://dropmail.me/api/graphql/${dropmailApiKey}`, {
             query: `mutation { introduceSession { id, expiresAt, addresses { address } } }`
         }, {
-            timeout: 10000,
+            timeout: 15000,
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
@@ -307,11 +282,11 @@ async function generateDropmail() {
 
 async function getInboxDropmail(sessionId) {
     try {
-        const response = await axios.post('https://dropmail.me/api/graphql/web-test-wgq3v8e5p8nh', {
+        const response = await axios.post(`https://dropmail.me/api/graphql/${dropmailApiKey}`, {
             query: `query ($id: ID!) { session(id: $id) { addresses { address }, mails { rawSize, fromAddr, toAddr, downloadUrl, text, headerSubject } } }`,
             variables: { id: sessionId }
         }, {
-            timeout: 10000,
+            timeout: 15000,
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/json'
@@ -324,12 +299,27 @@ async function getInboxDropmail(sessionId) {
     }
 }
 
+// ===================== HELPER: RETRY =====================
+async function withRetry(fn, maxRetries = 2, delay = 1500) {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const result = await fn();
+            if (result) return result;
+        } catch (e) {
+            if (i < maxRetries - 1) {
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+    }
+    return null;
+}
+
 // ===================== MAIN GENERATOR =====================
 async function generateEmail(preferredProvider = 'auto') {
     const providers = [
         { name: '1secmail', fn: generate1SecMail },
         { name: 'mailtm', fn: generateMailTm },
-        { name: 'mailgw', fn: generateMailGw },
+        { name: 'guerrillamail', fn: generateGuerrillaMail },
         { name: 'dropmail', fn: generateDropmail }
     ];
     
@@ -337,24 +327,20 @@ async function generateEmail(preferredProvider = 'auto') {
     if (preferredProvider !== 'auto') {
         const preferred = providers.find(p => p.name === preferredProvider);
         if (preferred) {
-            const result = await preferred.fn();
+            const result = await withRetry(() => preferred.fn());
             if (result) return result;
         }
+        return null;
     }
     
-    // Coba semua provider secara berurutan
+    // Coba semua provider secara berurutan dengan retry
     for (const provider of providers) {
-        try {
-            const result = await provider.fn();
-            if (result) {
-                console.log(`   └─ Using provider: ${result.provider}`);
-                return result;
-            }
-        } catch (error) {
-            console.error(`${provider.name} failed:`, error.message);
+        const result = await withRetry(() => provider.fn());
+        if (result) {
+            console.log(`   └─ Using provider: ${result.provider}`);
+            return result;
         }
-        // Delay antar provider
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
     
     return null;
@@ -428,7 +414,7 @@ app.post('/api/generate-multiple', async (req, res) => {
             }
             
             // Delay lebih lama untuk hindari rate limit
-            await new Promise(resolve => setTimeout(resolve, 1500));
+            await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (error) {
             console.error(`❌ Error at ${i + 1}:`, error.message);
             errors.push(error.message);
@@ -451,18 +437,17 @@ app.get('/api/inbox/:email', async (req, res) => {
         const emailData = emails[email];
         let inbox = [];
         
-        if (emailData.provider === '1secmail') {
-            const messages = await getInbox1SecMail(emailData.login, emailData.domain);
+        if (emailData.provider === 'dropmail') {
+            const messages = await getInboxDropmail(emailData.sessionId);
             
             for (const msg of messages) {
-                const detail = await getMessage1SecMail(emailData.login, emailData.domain, msg.id);
                 inbox.push({
-                    id: msg.id,
-                    from: msg.from,
-                    subject: msg.subject,
-                    date: msg.date,
-                    text: detail ? detail.textBody : '',
-                    html: detail ? detail.htmlBody : ''
+                    id: Math.random().toString(36).substring(7),
+                    from: msg.fromAddr,
+                    subject: msg.headerSubject,
+                    date: new Date().toISOString(),
+                    text: msg.text || '',
+                    html: ''
                 });
             }
         } else if (emailData.provider === 'mail.tm') {
@@ -479,34 +464,35 @@ app.get('/api/inbox/:email', async (req, res) => {
                     html: detail ? detail.html : ''
                 });
             }
-        } else if (emailData.provider === 'mail.gw') {
-            const messages = await getInboxMailGw(emailData.token);
+        } else if (emailData.provider === 'guerrillamail') {
+            const messages = await getInboxGuerrillaMail(emailData.address, emailData.sidToken);
             
             for (const msg of messages) {
-                const detail = await getMessageMailGw(emailData.token, msg.id);
+                const detail = await getMessageGuerrillaMail(emailData.address, emailData.sidToken, msg.mail_id);
+                inbox.push({
+                    id: msg.mail_id,
+                    from: msg.mail_from,
+                    subject: msg.mail_subject,
+                    date: msg.mail_timestamp,
+                    text: detail ? detail.mail_text : '',
+                    html: detail ? detail.mail_html : ''
+                });
+            }
+        } else if (emailData.provider === '1secmail') {
+            const messages = await getInbox1SecMail(emailData.login, emailData.domain);
+            
+            for (const msg of messages) {
+                const detail = await getMessage1SecMail(emailData.login, emailData.domain, msg.id);
                 inbox.push({
                     id: msg.id,
-                    from: msg.from?.address || msg.from,
+                    from: msg.from,
                     subject: msg.subject,
-                    date: msg.createdAt,
-                    text: detail ? detail.text : '',
-                    html: detail ? detail.html : ''
+                    date: msg.date,
+                    text: detail ? detail.textBody : '',
+                    html: detail ? detail.htmlBody : ''
                 });
             }
-        } else if (emailData.provider === 'dropmail') {
-            const messages = await getInboxDropmail(emailData.sessionId);
-            
-            for (const msg of messages) {
-                inbox.push({
-                    id: Math.random().toString(36).substring(7),
-                    from: msg.fromAddr,
-                    subject: msg.headerSubject,
-                    date: new Date().toISOString(),
-                    text: msg.text || '',
-                    html: ''
-                });
-            }
-        }
+        } 
         
         emails[email].inbox = inbox;
         broadcast({ type: 'inbox_update', email, inbox });
@@ -597,8 +583,8 @@ setInterval(async () => {
                 newMessages = await getInbox1SecMail(emailData.login, emailData.domain);
             } else if (emailData.provider === 'mail.tm') {
                 newMessages = await getInboxMailTm(emailData.token);
-            } else if (emailData.provider === 'mail.gw') {
-                newMessages = await getInboxMailGw(emailData.token);
+            } else if (emailData.provider === 'guerrillamail') {
+                newMessages = await getInboxGuerrillaMail(emailData.address, emailData.sidToken);
             } else if (emailData.provider === 'dropmail') {
                 newMessages = await getInboxDropmail(emailData.sessionId);
             }
@@ -628,11 +614,11 @@ server.listen(PORT, () => {
 ║                                                        ║
 ║  🌐 Server: http://localhost:${PORT}                       ║
 ║                                                        ║
-║  📦 Providers (Domain Jelas):                          ║
-║     • 1SecMail    → @1secmail.com/org/net              ║
-║     • Mail.tm     → @mail.tm domains                   ║
-║     • Mail.gw     → @mail.gw domains                   ║
-║     • Dropmail.me → @dropmail.me                       ║
+║  📦 Providers:                                          ║
+║     • 1SecMail      → @1secmail.com/org/net            ║
+║     • Mail.tm       → @mail.tm domains                 ║
+║     • GuerrillaMail → @guerrillamail.com               ║
+║     • Dropmail.me   → @dropmail.me                     ║
 ║                                                        ║
 ║  ✨ Features:                                          ║
 ║     • Generate unlimited emails                        ║
